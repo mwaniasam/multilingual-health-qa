@@ -18,3 +18,12 @@ Exp 1,TF-IDF per-language retrieval,"char_wb (3,5) + NearestNeighbors","1-NN cos
     'public_score': 0.496186,
     'insight': 'Shorter char n-grams generalize better across morphological variation. Retrieval now near ceiling (~0.50); word-level features and longest-candidate selection both hurt. Local ROUGE proxy validated against leaderboard.'
 }
+
+{
+    'exp_id': 'Exp 5',
+    'approach': 'AfriTeVa V2 fine-tuned, 5 epochs, tuned generation',
+    'model': 'castorini/afriteva_v2_base (428M)',
+    'key_config': 'fp32 Adafactor grad-checkpoint, 5 epochs (converged), beam=4 len_penalty=1.2 min_tokens=15',
+    'public_score': 0.297128,
+    'insight': 'AfriTeVa beats mt5 (+0.057) as predicted by literature, confirming Africa-centric pretraining helps. Still below retrieval (0.496): generation rephrases rather than reproducing reference wording. Motivates retrieval+generation ensemble.'
+}
