@@ -9,3 +9,12 @@ Exp 1,TF-IDF per-language retrieval,"char_wb (3,5) + NearestNeighbors","1-NN cos
     'public_score': 0.239618,
     'insight': 'Generation underperforms retrieval on ROUGE; model rephrases rather than reproducing reference wording. Motivates retrieval+generation ensemble.'
 }
+
+{
+    'exp_id': 'Exp 3',
+    'approach': 'Tuned retrieval, char_wb (2,4) n-grams',
+    'model': 'char_wb (2,4) + NearestNeighbors 1-NN',
+    'key_config': 'n-gram sweep selected (2,4); word+char and top-k-longest tested and rejected',
+    'public_score': 0.496186,
+    'insight': 'Shorter char n-grams generalize better across morphological variation. Retrieval now near ceiling (~0.50); word-level features and longest-candidate selection both hurt. Local ROUGE proxy validated against leaderboard.'
+}
