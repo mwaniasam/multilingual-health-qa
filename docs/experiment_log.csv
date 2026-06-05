@@ -1,2 +1,11 @@
 exp_id,approach,model,key_config,public_score,insight
 Exp 1,TF-IDF per-language retrieval,"char_wb (3,5) + NearestNeighbors","1-NN cosine, per-language index",0.490803,Strong non-neural floor; retrieving real human answers scores well on ROUGE due to fluent reference-like text
+
+{
+    'exp_id': 'Exp 2',
+    'approach': 'mt5-base fine-tuned, language-aware prompts',
+    'model': 'google/mt5-base (582M)',
+    'key_config': 'fp32, Adafactor, grad checkpointing, 3 epochs, beam=4, prefix-cleaned',
+    'public_score': 0.239618,
+    'insight': 'Generation underperforms retrieval on ROUGE; model rephrases rather than reproducing reference wording. Motivates retrieval+generation ensemble.'
+}
