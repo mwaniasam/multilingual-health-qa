@@ -113,7 +113,7 @@ Click the Colab badge above or open `notebooks/full_pipeline.ipynb` directly in 
 | 2 | mT5-base Fine-tuned | Seq2seq generation | 0.2396 | Generation rephrases, hurts ROUGE |
 | 3 | Tuned TF-IDF | char_wb (2,4) n-grams | 0.4962 | Shorter n-grams generalize better |
 | 4 | AfriTeVa V2 | Africa-centric seq2seq | 0.2971 | +0.057 over mT5, still below retrieval |
-| 5 | Semantic Retrieval | multilingual-e5-base + FAISS | *pending* | Dense embeddings capture topic semantics |
+| 5 | Semantic Retrieval | multilingual-e5-base + FAISS | **0.5742** | Dense embeddings capture topic semantics |
 | 6 | RAG (ROUGE-opt) | Gemini 2.5 Flash + retrieved context | *pending* | Verbatim phrasing from context |
 | 7 | RAG (LLM-opt) | Gemini 2.5 Flash quality generation | *pending* | Optimized for LLM-as-Judge |
 | 8 | Per-Metric Split | Different answers per target column | *pending* | Exploits multi-metric evaluation |
