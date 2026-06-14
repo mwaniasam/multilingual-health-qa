@@ -1,31 +1,25 @@
 """
-=============================================================================
-EXPERIMENT 13: Fine-Tuned E5-base with Contrastive Learning
-=============================================================================
-Run this on Kaggle with GPU T4 (16GB VRAM).
-
-Setup:
-    !pip install -q sentence-transformers faiss-gpu rouge-score pandas numpy tqdm
-
-Upload to Kaggle:
-    - Train.csv, Val.csv, Test.csv, SampleSubmission.csv
+EXPERIMENT 13: Fine-Tuned E5-base — FIXED FOR T4 MEMORY
 """
-
 import os
+os.environ['CUDA_VISIBLE_DEVICES'] = '0'  # Use SINGLE GPU, avoid DataParallel OOM
+
 import numpy as np
 import pandas as pd
 import torch
+import faiss
 from pathlib import Path
 from tqdm import tqdm
 from rouge_score import rouge_scorer
+from sentence_transformers import SentenceTransformer, InputExample, losses
+from torch.utils.data import DataLoader
 
 # ============================================================
 # CONFIG
 # ============================================================
-DATA_DIR = Path('/kaggle/input/multilingual-health-qa/')
+DATA_DIR = Path('/kaggle/input/datasets/samuelmwania1/multilingual-health-qa-data/')
 if not DATA_DIR.exists():
     DATA_DIR = Path('data/raw/')
-
 OUTPUT_DIR = Path('/kaggle/working/')
 if not OUTPUT_DIR.exists():
     OUTPUT_DIR = Path('submissions/')
@@ -43,77 +37,57 @@ combined = pd.concat([train_df, val_df], ignore_index=True).dropna(subset=['inpu
 print(f"Combined: {len(combined)} samples")
 
 # ============================================================
-# STEP 2: Prepare Training Data with Hard Negatives
+# STEP 2: Prepare Training Data
 # ============================================================
 print("\nPreparing contrastive training data...")
-from sentence_transformers import SentenceTransformer, InputExample, losses
-from sentence_transformers import SentenceTransformerTrainer, SentenceTransformerTrainingArguments
-from torch.utils.data import DataLoader
-
-# Create (question, answer) positive pairs
-# For MultipleNegativesRankingLoss, in-batch negatives are automatic
 train_examples = []
 for _, row in tqdm(combined.iterrows(), total=len(combined), desc="Building pairs"):
     q = str(row['input']).strip()
     a = str(row['output']).strip()
     if q and a:
-        # E5 format: prefix with query/passage
-        train_examples.append(InputExample(
-            texts=[f"query: {q}", f"passage: {a}"]
-        ))
-
+        train_examples.append(InputExample(texts=[f"query: {q}", f"passage: {a}"]))
 print(f"Training examples: {len(train_examples)}")
 
 # ============================================================
 # STEP 3: Fine-Tune E5-base
 # ============================================================
 print("\nLoading E5-base model...")
-model = SentenceTransformer('intfloat/multilingual-e5-base')
+model = SentenceTransformer('intfloat/multilingual-e5-base', device='cuda:0')
 
-# MultipleNegativesRankingLoss: for each (q, a+) pair,
-# all other a's in the batch are treated as negatives
 train_loss = losses.MultipleNegativesRankingLoss(model)
+train_dataloader = DataLoader(train_examples, shuffle=True, batch_size=8)  # Small batch for T4
 
-train_dataloader = DataLoader(train_examples, shuffle=True, batch_size=32)
+print(f"Training for 3 epochs, batch_size=8, steps={len(train_dataloader) * 3}")
+print(f"GPU: {torch.cuda.get_device_name(0)}, Memory: {torch.cuda.get_device_properties(0).total_mem / 1e9:.1f}GB")
 
-print(f"Training for 3 epochs with batch_size=32...")
-print(f"Total steps: {len(train_dataloader) * 3}")
-
-# Use the old-style fit() for simplicity
 model.fit(
     train_objectives=[(train_dataloader, train_loss)],
     epochs=3,
     warmup_steps=100,
     show_progress_bar=True,
     output_path=str(OUTPUT_DIR / 'e5-base-finetuned'),
+    use_amp=True,  # Mixed precision to save memory
 )
-
 print("✅ Fine-tuning complete!")
 
 # ============================================================
-# STEP 4: Build FAISS Index with Fine-Tuned Model
+# STEP 4: Build FAISS Index
 # ============================================================
 print("\nBuilding FAISS index with fine-tuned model...")
-import faiss
-
-# Encode corpus
 corpus_questions = [f"query: {q}" for q in combined['input'].fillna('').tolist()]
 corpus_embeddings = model.encode(
-    corpus_questions,
-    batch_size=64,
-    show_progress_bar=True,
-    normalize_embeddings=True,
+    corpus_questions, batch_size=64,
+    show_progress_bar=True, normalize_embeddings=True,
 )
-print(f"Corpus embeddings: {corpus_embeddings.shape}")
+corpus_embeddings = corpus_embeddings.astype(np.float32)
+print(f"Corpus: {corpus_embeddings.shape}, dtype={corpus_embeddings.dtype}")
 
-# Build index
-dim = corpus_embeddings.shape[1]
-index = faiss.IndexFlatIP(dim)
-index.add(corpus_embeddings.astype(np.float32))
+index = faiss.IndexFlatIP(corpus_embeddings.shape[1])
+index.add(corpus_embeddings)
 print(f"FAISS index: {index.ntotal} vectors")
 
 # ============================================================
-# STEP 5: Evaluate on Validation Set
+# STEP 5: Evaluate on Val
 # ============================================================
 print("\n" + "=" * 60)
 print("EVALUATING ON VALIDATION SET")
@@ -121,56 +95,53 @@ print("=" * 60)
 
 scorer = rouge_scorer.RougeScorer(['rouge1', 'rougeL'], use_stemmer=False)
 
-val_questions = [f"query: {q}" for q in val_df['input'].fillna('').tolist()]
-val_embeddings = model.encode(val_questions, batch_size=64, normalize_embeddings=True,
-                               show_progress_bar=True)
+val_questions_raw = val_df['input'].fillna('').tolist()
+val_questions = [f"query: {q}" for q in val_questions_raw]
+val_embeddings = model.encode(val_questions, batch_size=64,
+                              normalize_embeddings=True, show_progress_bar=True)
+val_embeddings = val_embeddings.astype(np.float32)
 
-rouge1_scores = []
+rouge1_scores, rougeL_scores = [], []
 for idx in tqdm(range(len(val_df)), desc="Val eval"):
     q = str(val_df.iloc[idx]['input']).strip()
     ref = str(val_df.iloc[idx]['output']).strip()
-
     q_emb = val_embeddings[idx:idx + 1]
     D, I = index.search(q_emb, 10)
-
-    # Skip self-match
+    pred = ''
     for j in range(10):
-        cand_q = str(combined.iloc[I[0][j]]['input']).strip()
-        if cand_q != q:
+        if str(combined.iloc[I[0][j]]['input']).strip() != q:
             pred = str(combined.iloc[I[0][j]]['output'])
             break
-    else:
+    if not pred:
         pred = str(combined.iloc[I[0][0]]['output'])
-
     r = scorer.score(ref, pred)
     rouge1_scores.append(r['rouge1'].fmeasure)
+    rougeL_scores.append(r['rougeL'].fmeasure)
 
-print(f"\nFine-tuned E5 ROUGE-1: {np.mean(rouge1_scores):.4f}")
-print(f"Baseline E5 (no FT):    0.5219")
-print(f"Improvement:            {np.mean(rouge1_scores) - 0.5219:+.4f}")
+print(f"\n{'='*60}")
+print(f"Fine-tuned E5 ROUGE-1: {np.mean(rouge1_scores):.4f}")
+print(f"Fine-tuned E5 ROUGE-L: {np.mean(rougeL_scores):.4f}")
+print(f"Baseline E5 (no FT):   0.5219")
+print(f"Improvement:           {np.mean(rouge1_scores) - 0.5219:+.4f}")
+print(f"{'='*60}")
 
 # ============================================================
 # STEP 6: Generate Test Submission
 # ============================================================
-print("\n" + "=" * 60)
-print("GENERATING TEST SUBMISSION")
-print("=" * 60)
-
+print("\nGenerating test submission...")
 test_questions = [f"query: {q}" for q in test_df['input'].fillna('').tolist()]
-test_embeddings = model.encode(test_questions, batch_size=64, normalize_embeddings=True,
-                                show_progress_bar=True)
+test_embeddings = model.encode(test_questions, batch_size=64,
+                               normalize_embeddings=True, show_progress_bar=True)
+test_embeddings = test_embeddings.astype(np.float32)
 
 rows = []
 for idx in tqdm(range(len(test_df)), desc="Test submission"):
     q_emb = test_embeddings[idx:idx + 1]
     D, I = index.search(q_emb, 3)
     answer = str(combined.iloc[I[0][0]]['output'])
-
     rows.append({
         'ID': test_df.iloc[idx]['ID'],
-        'TargetRLF1': answer,
-        'TargetR1F1': answer,
-        'TargetLLM': answer,
+        'TargetRLF1': answer, 'TargetR1F1': answer, 'TargetLLM': answer,
     })
 
 sub = pd.DataFrame(rows)
@@ -181,9 +152,8 @@ path = OUTPUT_DIR / 'exp13_e5_finetuned.csv'
 sub.to_csv(path, index=False)
 print(f"\n✅ Saved: {path}")
 print(f"Shape: {sub.shape}")
-print(f"\nDOWNLOAD THIS FILE AND SUBMIT TO ZINDI!")
-print(f"Comment: Experiment 13: E5-base fine-tuned with contrastive learning (MultipleNegativesRankingLoss) on 36K health QA pairs, 3 epochs.")
+print(f"\n📥 DOWNLOAD AND SUBMIT TO ZINDI!")
+print(f"Comment: Experiment 13: E5-base fine-tuned with contrastive learning (MNRL) on {len(combined)} health QA pairs, 3 epochs, AMP.")
 
-# Also save the model for later use
 model.save(str(OUTPUT_DIR / 'e5-base-finetuned-final'))
-print("✅ Model saved for reuse")
+print("✅ Model saved")
