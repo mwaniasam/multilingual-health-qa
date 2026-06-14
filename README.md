@@ -5,149 +5,146 @@
 
 > **Course:** Machine Learning Techniques I — Final Course Project (40%)  
 > **Author:** Samuel Mwania  
-> **Zindi Username:** mwaniasam
+> **Zindi Username:** mwaniasam  
+> **Final Public Score:** 0.6908 (V7) · Rank ~13–15 / 200+  
+> **Score Progression:** 0.4908 → 0.6908 (+41% relative improvement)
 
 ## Overview
 
-This project develops a multilingual question-answering system for maternal, sexual, and reproductive health (MSRH) topics across **8 language–country configurations** spanning **5 African languages**: Akan (Ghana), Amharic (Ethiopia), English (Ethiopia, Ghana, Kenya, Uganda), Luganda (Uganda), and Swahili (Kenya).
+A retrieval-and-selection pipeline for multilingual health question answering across **8 language–country subsets** spanning **5 African languages**: Akan (Ghana), Amharic (Ethiopia), English (Ethiopia, Ghana, Kenya, Uganda), Luganda (Uganda), and Swahili (Kenya).
 
-The system uses a **Retrieval-Augmented Generation (RAG)** architecture combining:
-1. **Dense semantic retrieval** using multilingual embeddings (`intfloat/multilingual-e5-base`)
-2. **LLM-powered answer generation** using Google Gemini (`gemini-2.5-flash`)
-3. **Per-metric optimization** — separate answer strategies for ROUGE-1, ROUGE-L, and LLM-as-Judge evaluation
+The system retrieves candidate answers from a 36,501-pair training corpus using dense semantic search, then applies per-language selection strategies (MBR consensus, extractive stitching, cross-encoder reranking, or fine-tuned generation) to maximize ROUGE and LLM-as-Judge scores.
+
+## Final Architecture (V7)
+
+```
+Test Question
+     │
+     ▼
+┌─────────────────────────────────────────────────┐
+│  AfriE5-Large-instruct (McGill-NLP)             │
+│  Fine-tuned Q→Q with MNRL + hard negatives      │
+│  + Embedding interpolation (β·AfriE5 + (1-β)·FT2)│
+└──────────────────┬──────────────────────────────┘
+                   │ Top-15 candidates
+                   ▼
+┌─────────────────────────────────────────────────┐
+│  Per-Language Routing                           │
+│                                                 │
+│  Strong langs (Uga/Ken/Swa) → MBR top-1         │
+│  Aka_Gha, Amh_Eth → CE reranker → stitch        │
+│  Eng_Gha → Qwen2.5-7B LoRA generation           │
+│  Lug_Uga → Per-lang adapter (β=0.8) + MBR       │
+└─────────────────────────────────────────────────┘
+                   │
+                   ▼
+         Identical-column submission
+```
+
+**All components are fully open-source.** No paid APIs in the final solution.
+
+## Score Progression
+
+| # | Experiment | Public Score | Δ | Key Change |
+|---|-----------|:-----------:|:---:|-----------|
+| 1 | TF-IDF char n-gram retrieval | 0.4908 | — | Baseline |
+| 2 | mT5-base seq2seq | 0.2396 | −0.251 | Generation destroys ROUGE |
+| 3 | AfriTeVa V2 seq2seq | 0.2971 | — | Better than mT5, still below retrieval |
+| 4 | E5-base semantic retrieval | 0.5742 | +0.083 | Dense embeddings leap |
+| 5 | AfriE5-Large + HN mining | 0.6545 | +0.080 | SOTA African embedder |
+| 6 | + MBR consensus selection | 0.6597 | +0.005 | Consensus over top-1 |
+| 7 | + Extractive stitcher | 0.6650 | +0.005 | Verbatim sentence extraction |
+| 8 | + Unicode fix + identical cols | 0.6843 | +0.019 | Correct Amharic/Akan scoring |
+| 9 | + Embedding interpolation | **0.6898** | +0.006 | **V4 (selected final)** |
+| 10 | + CE reranker + QA-union | **0.6908** | +0.001 | **V7 (BEST, selected final)** |
+
+Full experiment ledger (44 experiments): [`docs/experiment_log.csv`](docs/experiment_log.csv)
 
 ## Project Structure
 
 ```
 multilingual-health-qa/
-├── README.md                    # This file
-├── requirements.txt             # Python dependencies
+├── README.md
+├── requirements.txt
+├── .gitignore
 ├── data/
-│   ├── raw/                     # Original competition data
-│   │   ├── Train.csv            # 29,815 training Q/A pairs
-│   │   ├── Val.csv              # 6,686 validation Q/A pairs
-│   │   ├── Test.csv             # 2,618 test questions
-│   │   └── SampleSubmission.csv # Submission format template
-│   └── processed/               # Generated artifacts
-│       ├── train_clean.csv      # Cleaned training data
-│       ├── faiss_index.bin      # FAISS semantic search index
-│       ├── retrieval_meta.pkl   # Retrieval metadata
-│       └── embeddings.npy       # Precomputed embeddings
+│   └── raw/                          # Competition data
+│       ├── Train.csv                 # 36,501 Q/A pairs (29,815 train + 6,686 val)
+│       ├── Test.csv                  # 2,618 test questions
+│       └── SampleSubmission.csv
 ├── notebooks/
-│   ├── 01_eda_and_baseline.ipynb         # EDA + TF-IDF baseline
-│   ├── 02_mt5base_finetuning.ipynb       # mT5-base fine-tuning
-│   ├── 03_afriteva_finetuning.ipynb      # AfriTeVa V2 fine-tuning
-│   └── full_pipeline.ipynb               # End-to-end RAG pipeline (Colab-ready)
+│   ├── 01_eda_and_baseline.ipynb     # EDA + TF-IDF baseline (Exp 1)
+│   ├── 02_mt5base_finetuning.ipynb   # mT5-base seq2seq (Exp 2)
+│   ├── 03_afriteva_finetuning.ipynb  # AfriTeVa V2 (Exp 3)
+│   ├── full_pipeline.ipynb           # End-to-end Colab-ready pipeline
+│   └── experiments/                  # All experiment scripts (.py)
 ├── src/
-│   ├── __init__.py
-│   ├── semantic_retrieval.py    # Dense retrieval with multilingual-e5-base
-│   ├── gemini_rag.py            # Gemini RAG generation module
-│   ├── evaluate_local.py        # Local ROUGE evaluation harness
-│   ├── run_pipeline.py          # Main orchestration script
-│   └── submit_retrieval_only.py # Retrieval-only submission generator
-├── submissions/                 # Generated submission CSVs
-├── docs/
-│   ├── experiment_log.csv       # Detailed experiment tracking
-│   └── language_distribution.png
-└── .gitignore
+│   ├── bootstrap_contract.py         # Pipeline helper functions + data contract
+│   ├── training_cells.py             # CE reranker, FT2, Lug adapter, Qwen LoRA
+│   ├── build_submissions.py          # V4, V6, V7 submission builders
+│   ├── semantic_retrieval.py         # Dense retrieval with E5 embeddings
+│   ├── evaluate_local.py             # Local ROUGE evaluation harness
+│   └── ...
+├── submissions/                      # All submission CSVs
+│   ├── submission_v7.csv             # BEST (0.6908) — selected final
+│   ├── submission_v4_final.csv       # Hedge (0.6898) — selected final
+│   └── ...                           # Earlier experiments
+└── docs/
+    ├── SamuelMwania_FinalProject.md  # Academic report
+    ├── FINDINGS_AND_HANDOFF.md       # Complete findings and architecture record
+    ├── experiment_log.csv            # All 44 experiments with verdicts
+    └── ARTIFACTS_MANIFEST.md         # Drive artifact checklist
 ```
 
-## Quick Start
+## Quick Start (Google Colab)
 
-### Prerequisites
+1. Click the **Open in Colab** badge above
+2. Run the bootstrap cell (loads data, builds embeddings, defines helpers)
+3. Run training cells to load pre-trained models from Drive
+4. Run the V7 builder to generate the submission
 
-- Python 3.10+
-- CUDA-capable GPU (8GB+ VRAM) or Google Colab
-- Gemini API key ([get one free](https://ai.google.dev/))
+**Models on Google Drive** (too large for GitHub):
+- `afrie5-final-model/` — retrieval backbone
+- `ce-reranker-v2/` — cross-encoder (xlm-roberta-base)
+- `qwen-ft-health/` — Qwen2.5-7B LoRA adapter
+- `afrie5-lug_uga/` — Luganda per-language adapter
 
-### Installation
+See [`docs/ARTIFACTS_MANIFEST.md`](docs/ARTIFACTS_MANIFEST.md) for the complete artifact checklist.
 
-```bash
-git clone https://github.com/mwaniasam/multilingual-health-qa.git
-cd multilingual-health-qa
-pip install -r requirements.txt
-```
+## Technologies
 
-### Run the Pipeline
+| Component | Model/Tool | Purpose |
+|-----------|-----------|---------|
+| Retrieval backbone | [AfriE5-Large-instruct](https://huggingface.co/McGill-NLP/AfriE5-large-instruct) | Dense Q→Q semantic search |
+| Cross-encoder | xlm-roberta-base (binary classification) | Rerank candidates for Aka/Amh |
+| Generation | [Qwen2.5-7B-Instruct](https://huggingface.co/Qwen/Qwen2.5-7B-Instruct) (LoRA r=16) | Eng_Gha answer generation |
+| Search index | FAISS (IndexFlatIP) | Fast cosine similarity search |
+| Selection | MBR consensus + extractive stitcher | Per-language answer optimization |
+| Evaluation | Unicode ROUGE tokenizer (re.UNICODE) | Matches organizer's fixed scorer |
 
-```bash
-# Step 1: Build the semantic retrieval index (~15 min)
-python src/run_pipeline.py --step index
-
-# Step 2: Generate answers using Gemini RAG (~45 min with paid API)
-python src/run_pipeline.py --step generate --api-key YOUR_GEMINI_KEY
-
-# Step 3: Build optimized submission
-python src/run_pipeline.py --step submit --api-key YOUR_GEMINI_KEY
-
-# Or run everything at once:
-python src/run_pipeline.py --step all --api-key YOUR_GEMINI_KEY
-```
-
-### Google Colab
-
-Click the Colab badge above or open `notebooks/full_pipeline.ipynb` directly in Colab. The notebook includes all setup steps and can run end-to-end with a free Colab GPU.
-
-## Methodology
-
-### Data Understanding
-
-| Subset | Language | Country | Train | Val | Test |
-|--------|----------|---------|-------|-----|------|
-| Eng_Uga | English | Uganda | 7,624 | 1,688 | 744 |
-| Aka_Gha | Akan | Ghana | 4,455 | 1,114 | 492 |
-| Eng_Gha | English | Ghana | 4,443 | 1,104 | 491 |
-| Eng_Eth | English | Ethiopia | 3,915 | 564 | 60 |
-| Lug_Uga | Luganda | Uganda | 3,383 | 846 | 374 |
-| Eng_Ken | English | Kenya | 2,080 | 390 | 167 |
-| Swa_Ken | Swahili | Kenya | 2,070 | 518 | 229 |
-| Amh_Eth | Amharic | Ethiopia | 1,845 | 462 | 61 |
-
-**Key data insight:** Train and test share topic IDs (hash suffixes), but test questions are always *different* from training questions on the same topic. Furthermore, 81% of test entries require cross-lingual transfer — the training data for that topic exists only in a different language.
-
-### Approach Evolution
-
-| # | Experiment | Approach | Public Score | Key Insight |
-|---|-----------|----------|-------------|-------------|
-| 1 | TF-IDF Baseline | char_wb (3,5) 1-NN retrieval | 0.4908 | Strong non-neural floor |
-| 2 | mT5-base Fine-tuned | Seq2seq generation | 0.2396 | Generation rephrases, hurts ROUGE |
-| 3 | Tuned TF-IDF | char_wb (2,4) n-grams | 0.4962 | Shorter n-grams generalize better |
-| 4 | AfriTeVa V2 | Africa-centric seq2seq | 0.2971 | +0.057 over mT5, still below retrieval |
-| 5 | Semantic Retrieval | multilingual-e5-base + FAISS | **0.5742** | Dense embeddings capture topic semantics |
-| 6 | RAG (ROUGE-opt) | Gemini 2.5 Flash + retrieved context | *pending* | Verbatim phrasing from context |
-| 7 | RAG (LLM-opt) | Gemini 2.5 Flash quality generation | *pending* | Optimized for LLM-as-Judge |
-| 8 | Per-Metric Split | Different answers per target column | *pending* | Exploits multi-metric evaluation |
-
-### Evaluation Metrics
+## Evaluation Metrics
 
 The competition uses a weighted combination:
 - **ROUGE-1 F1** (37%): Unigram overlap
 - **ROUGE-L F1** (37%): Longest common subsequence
 - **LLM-as-a-Judge** (26%): Factual accuracy, completeness, language quality
 
-Our per-metric optimization strategy submits different answers for each metric column.
-
 ## Ethical Considerations
 
-- **Health misinformation risk:** Generated answers about reproductive health could cause harm if medically inaccurate. All outputs are grounded in retrieved training data reviewed by health professionals.
-- **Language equity:** Low-resource African languages are underserved by NLP systems. This work contributes to closing that gap.
-- **Cultural sensitivity:** Health topics around sexuality and reproduction require cultural awareness. The system respects local terminology and context.
-- **Bias in evaluation:** ROUGE metrics favor lexical overlap and may disadvantage morphologically rich languages (e.g., Akan, Amharic).
+- **Health misinformation risk:** All outputs are grounded in retrieved training data curated by health professionals. No free-form generation on strong languages.
+- **Language equity:** This work addresses the critical gap in NLP tools for low-resource African languages.
+- **Cultural sensitivity:** Health topics around sexuality and reproduction require cultural awareness. The system respects local terminology.
+- **Bias in evaluation:** ROUGE metrics disadvantage morphologically rich languages (Akan, Amharic) due to tokenization differences.
 
-## Technologies
+## AI Usage Disclosure
 
-- **Retrieval:** [intfloat/multilingual-e5-base](https://huggingface.co/intfloat/multilingual-e5-base) (278M params, 100+ languages)
-- **Generation:** [Google Gemini 2.5 Flash](https://ai.google.dev/) via API
-- **Fine-tuning:** [AfriTeVa V2](https://huggingface.co/castorini/afriteva_v2_base) (African-language T5), [mT5-base](https://huggingface.co/google/mt5-base)
-- **Search:** FAISS (Facebook AI Similarity Search)
-- **Evaluation:** ROUGE-score, custom whitespace tokenizer
-
-## License
-
-This project is submitted as coursework for Machine Learning Techniques I. The code is available for educational purposes.
+- **Claude (Anthropic)** and **Antigravity (Google)** were used as coding assistants for experimentation, debugging, and code generation.
+- **Gemini API** was used in early experiments (Exp 6–11) but was **removed from the final solution** for open-source compliance.
+- All architectural decisions, experiment design, and analysis reflect the author's own understanding and judgment.
 
 ## Acknowledgments
 
 - [Zindi Africa](https://zindi.africa) for hosting the competition
-- [AegisveriTas Project](https://aegisveritas.org) for inspiration
+- [ITU](https://www.itu.int/), HASH, and Makerere University for organizing the challenge
+- [McGill-NLP](https://github.com/McGill-NLP) for AfriE5-Large-instruct
 - Health professionals who curated the multilingual Q/A dataset
