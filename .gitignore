@@ -1,49 +1,39 @@
-# Data files
-data/raw/*.csv
-data/processed/*.bin
-data/processed/*.pkl
-data/processed/*.npy
-data/processed/*.json
-
-# Model weights and checkpoints
-*.pt
-*.pth
-*.safetensors
-*.ckpt
-models/
-
 # Python
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
+*$py.class
 *.egg-info/
-.eggs/
 dist/
 build/
 
 # Jupyter
 .ipynb_checkpoints/
-*.ipynb_meta
+
+# Data artifacts (large files - keep on Drive)
+data/processed/
+*.npy
+*.pkl
+*.bin
+*.h5
+*.pt
+*.safetensors
+
+# Model weights (keep on Drive)
+models/
 
 # Environment
 .env
-*.env
 .venv/
 env/
 
 # IDE
 .vscode/
 .idea/
-*.swp
-*.swo
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Logs
-*.log
-
-# Submissions (keep latest, ignore timestamped)
-submissions/submission_*_2*.csv
-!submissions/submission_latest.csv
+# API keys
+*secret*
+*credentials*
