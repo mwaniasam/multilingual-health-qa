@@ -1,11 +1,45 @@
-exp_id,approach,model,key_config,public_score,local_rouge1,local_rougeL,insight,date
-Exp01,TF-IDF per-language retrieval,"char_wb (3,5) + NearestNeighbors","1-NN cosine, per-language index",0.4908,0.4266,0.4266,"Strong non-neural floor; retrieving real human answers scores well on ROUGE due to fluent reference-like text. Establishes that retrieval beats generation for this task.",2026-05-20
-Exp02,mT5-base fine-tuned seq2seq,"google/mt5-base (582M)","fp32, Adafactor, grad checkpointing, 3 epochs, beam=4, language-aware prefix prompts",0.2396,0.2100,0.2050,"Generation significantly underperforms retrieval on ROUGE. Model rephrases rather than reproducing reference wording. mT5 has limited coverage of Akan and Luganda in its pretraining data.",2026-05-24
-Exp03,Tuned TF-IDF retrieval (n-gram sweep),"char_wb (2,4) + NearestNeighbors","n-gram sweep over (2,4)/(2,5)/(3,5)/(3,6)/(4,6); word+char combo tested",0.4962,0.4348,0.4348,"Shorter char n-grams (2,4) generalize better across morphological variation in agglutinative languages like Akan and Luganda. Word-level features and top-k-longest selection both hurt. Local ROUGE proxy validated against leaderboard.",2026-05-26
-Exp04,Combined word+char TF-IDF,"char_wb (3,5) + word (1,2) concatenated","hstack(char_tfidf, word_tfidf), 1-NN",0.4908,0.4200,0.4200,"Adding word-level features did NOT improve over char-only. Morphological complexity of African languages means word boundaries are less informative than character patterns.",2026-05-27
-Exp05,AfriTeVa V2 fine-tuned,"castorini/afriteva_v2_base (428M)","fp32 Adafactor grad-checkpoint, 5 epochs converged, beam=4 len_penalty=1.2 min_tokens=15",0.2971,0.2650,0.2600,"AfriTeVa beats mT5 by +0.057 as predicted by literature — Africa-centric pretraining helps. Tokenizer UNK rate: Akan 2.0/1000 vs mT5 8.4/1000. Still below retrieval: generation rephrases rather than reproducing reference wording.",2026-05-30
-Exp06,Dense semantic retrieval,"intfloat/multilingual-e5-base (278M) + FAISS","IndexFlatIP, 36501 vectors, mean-pool + L2-norm, per-language + cross-lingual top-K",0.5742,,,Semantic embeddings capture topic-level similarity that TF-IDF character n-grams miss. +0.078 over best TF-IDF. Enables cross-lingual retrieval (81% of test entries need it). Index built from train+val combined.,2026-06-06
-Exp07,RAG ROUGE-optimized,"Gemini 2.5 Flash + multilingual-e5-base retrieval","temp=0.1, max_tokens=600, top-5 same-lang + top-3 cross-lang context, prompt: maximize word overlap",0.3402,,,"CRITICAL NEGATIVE RESULT: Generation destroys ROUGE overlap. Even when prompted to copy verbatim phrasing from context, Gemini rephrases and paraphrases. Score drops -0.234 vs pure retrieval. Confirms that retrieval >> generation for ROUGE metrics in this task.",2026-06-06
-Exp08,RAG LLM-judge-optimized,"Gemini 2.5 Flash + multilingual-e5-base retrieval","temp=0.3, max_tokens=600, emphasis on factual accuracy + completeness + language quality",,,,Separate generation strategy for LLM-as-Judge column. Higher temperature for more natural writing. Prompt emphasizes factual accuracy and cultural appropriateness over lexical overlap.,2026-06-06
-Exp09,Per-metric column optimization,"Hybrid: retrieval + Gemini RAG","TargetRLF1=retrieval, TargetR1F1=retrieval, TargetLLM=Gemini ROUGE-opt",0.5140,,,"NEGATIVE RESULT: Hybrid scores -0.060 below pure retrieval. LLM judge also prefers human-written expert answers over Gemini generation. Implies retrieved training answers are factually accurate, well-structured, and linguistically appropriate. Generation adds no value over high-quality retrieval.",2026-06-06
-Exp10,Ensemble retrieval + generation,"Best of retrieval vs generation per-entry","Score-based selection: use retrieval when high similarity score, generation otherwise",,,,Final ensemble combines retrieval confidence scores with generation quality. High-confidence retrievals likely outperform generation on ROUGE; generation better for novel questions.,2026-06-06
+id,date_phase,experiment,objective,result,verdict,notes
+1,week1,AfriE5-Large Q->Q retrieval (MNRL + hard neg),baseline retriever,0.6545 LB,ADOPTED,core backbone; confirmed SOTA African embedder (AfriMTEB)
+2,week1,BM25 + dense fusion (RRF),pool diversity,0.6531 LB,REJECTED,no improvement over dense
+3,week1,Cross-encoder ROUGE regression,rerank,0.695 Pearson but hurt LB,REJECTED,wrong objective; predicting ROUGE vs unknown ref
+4,week1,ROUGE-aligned retriever fine-tune (global),lift weak langs,degraded strong langs,REJECTED,catastrophic forgetting
+5,week1,Qwen-7B free-form RAG,generation,0.3505 LB,REJECTED,paraphrasing destroys ROUGE
+6,week1,Hybrid retrieval ROUGE + generated LLM,mix,0.5717 LB,REJECTED,Qwen LLM answers judged 0.53
+7,week1,mT5-base seq2seq,generation,0.240 LB,REJECTED,weak
+8,week1,AfriTeVa V2 seq2seq,generation,0.297 LB,REJECTED,weak
+9,phase2,MBR consensus selection + same-lang + guarded override,better selection,+0.005 LB (0.6597),ADOPTED,pick candidate agreeing most with others; tau per language
+10,phase2,Exact-duplicate recovery at test,free points,~+0.01 LB,ADOPTED,exclude_exact=False at test time
+11,phase2,Gemini grounded refinement (LLM column),judge,+0.01 LB (0.6623),REJECTED,non-compliant + marginal; dropped from final
+12,phase2,Greedy extractive stitcher (R1),weak-lang coverage,Aka +0.023 / EngGha +0.017 / Amh +0.009,ADOPTED,gated; loses badly on coherent-answer langs
+13,phase2,Q->A retrieval leg in 4-leg RRF union,pool diversity,EngGha +0.011 R1 holdout,ADOPTED,Eng_Gha only; weight by AfriE5 cosine not RRF
+14,phase2,Gemini-embedding union leg,pool diversity,marginal,REJECTED,non-compliant; near-zero oracle lift
+15,phase2,BGE-M3 4th leg,pool diversity,kept,ADOPTED,open-source leg in union
+16,phase2,Unicode tokenizer rebuild,correct local scoring,Amh 0.21 not 0.04; Akan 0.33 not 0.39,ADOPTED,re.UNICODE \w+ CAP=400; all tuning re-derived
+17,phase2,Judge-proxy gating (Gemini judges Gemini),LLM column,self-preference bias,REJECTED,proxy directional only; LB is truth
+18,phase2,Qwen2.5-7B LoRA r16 epoch1 (Eng_Gha gen),generation,beats retrieval oracle on Eng_Gha,ADOPTED,single biggest discovery; +0.017 LB via V2
+19,phase2,Identical-column consensus answer,compliance + judge,judge 0.8052 > top-1 > Gemini,ADOPTED,compliant file scored best; dissolved split-vs-compliant dilemma
+20,phase2,Qwen gen on Aka_Gha,generation,wins RL only / loses R1,PARTIAL,later superseded by CE-stitch
+21,phase2,Qwen gen on strong langs (Lug_Uga/Eng_Uga),generation,delta -0.089,REJECTED,structural wall; epochs 1 and 3 both
+22,phase2,Qwen epochs 2-3 resume,scaling,no convergence toward retrieval,REJECTED,memorization without generalization
+23,phase2,Embedding interpolation b*AfriE5+(1-b)*FT2,strong-lang retrieval,Eng_Uga/Lug_Uga/Swa_Ken gated,ADOPTED,harvests FT2 gains without forgetting
+24,phase2,Interpolation round 2 (finer grid),refine,no new languages,REJECTED,round-1 betas already optimal
+25,phase2,Per-language retriever adapter Lug_Uga,retrieval,+0.0061 holdout,ADOPTED,answer-similarity supervision; 541 triplets; beta=0.8
+26,phase2,Per-language adapter Eng_Uga,retrieval,beta=0.0,REJECTED,942 triplets too thin vs 0.87 top-1
+27,phase2,Judge-aware tie-break (longest),judge,-0.006 to -0.44,REJECTED,utility ties != quality ties
+28,phase2,HyDE answer-embedding retrieval,retrieval,dead/locked; below deployed on Gha,REJECTED,weak generations are misleading search keys
+29,phase2,K-sweep candidate depth,selection,K15 optimal,REJECTED,tau=99 made it vacuous; optima found
+30,phase2,Cross-encoder v2 (xlm-roberta-base classification),rerank -> stitch,Aka +0.0080 / Amh +0.0077 holdout,ADOPTED,THE reranker; binary R1>=0.5 pos / <=0.2 neg; unicode labels; guarded
+31,phase2,Cross-encoder large (xlm-roberta-large 2ep),rerank,loss 0.503->0.513; worse,REJECTED,never converged on 31k binary pairs
+32,phase2,Cross-encoder dup-group supervision (strong langs),rerank,all max-margin and still lost,REJECTED,dense top-1 already surfaces duplicate
+33,phase2,BGE-reranker-v2-m3 pretrained,rerank,did not beat in-domain CE,REJECTED,scale lost to in-domain supervision
+34,phase2,Q->(Q+A) concatenated retrieval leg,pool diversity,Amh QA-union +0.0042 holdout,ADOPTED,Amh_Eth only (in V7)
+35,phase2,Full-length LCS rerank (unguarded),RL,-0.21 to -0.70,REJECTED,duplicates outvote strong top-1
+36,phase2,Cross-lingual Aka->Eng_Gha pool,retrieval,oracle barely moved,REJECTED,country-specific token pollution
+37,phase2,Stitch-lambda re-tune on new pools,selection,leak bug caught + fixed,REJECTED,self-retrieval leak; V7 confirmed clean
+38,build,V4 (interp + Aka re-decision),submission,0.6898 LB,SELECTED-FINAL,composition hedge; judge column 0.8218
+39,build,V6 (CE-stitch Aka/Amh + Lug adapter + Swa beta),submission,~0.689 LB,SUPERSEDED,intermediate stack
+40,build,V7 (V6 + Amh QA-union CE-stitch),submission,0.6908 LB BEST,SELECTED-FINAL,top line
+41,build,V8 (V7 + Eng_Gha QA-union generation swap),submission,~0.6894 LB,REJECTED,ROUGE +0.017 holdout but judge column -0.0063; net -0.0014
+42,research,Qwen3-Embedding-8B as 5th retrieval leg,retrieval,not run,UNTRIED,Apache-2.0; ~30% odds; 8B tight on 8GB
+43,research,Length feature in CE reranker,rerank,not run,UNTRIED,AraHealthQA winner used length + question-sim features
+44,research,Pseudo-labeling CE on test,rerank,not completed,UNTRIED,cells preserved; bounded EV (CE feeds 2 langs)
