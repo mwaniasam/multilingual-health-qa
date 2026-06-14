@@ -27,7 +27,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 # ============================================================
 # CONFIG
 # ============================================================
-DATA_DIR = Path('/kaggle/input/multilingual-health-qa/')
+DATA_DIR = Path('/kaggle/input/datasets/samuelmwania1/multilingual-health-qa-data/')
 if not DATA_DIR.exists():
     DATA_DIR = Path('data/raw/')
 

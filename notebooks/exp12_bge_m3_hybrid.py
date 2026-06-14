@@ -1,33 +1,20 @@
 """
-=============================================================================
-EXPERIMENT 12: BGE-M3 Hybrid Retrieval (Dense + Sparse + ColBERT)
-=============================================================================
-Run this on Kaggle with GPU T4 (16GB VRAM).
-
-Setup:
-    !pip install -q FlagEmbedding rouge-score pandas numpy tqdm
-
-Upload to Kaggle:
-    - Train.csv, Val.csv, Test.csv, SampleSubmission.csv
+EXPERIMENT 12: BGE-M3 Hybrid Retrieval — FULLY FIXED
 """
-
 import os
 import numpy as np
 import pandas as pd
+import faiss
 from pathlib import Path
-from datetime import datetime
 from tqdm import tqdm
 from rouge_score import rouge_scorer
 
 # ============================================================
-# CONFIG — adjust paths for Kaggle
+# CONFIG
 # ============================================================
-# On Kaggle: /kaggle/input/your-dataset-name/
-# Locally: data/raw/
-DATA_DIR = Path('/kaggle/input/multilingual-health-qa/')  # CHANGE if needed
+DATA_DIR = Path('/kaggle/input/datasets/samuelmwania1/multilingual-health-qa-data/')
 if not DATA_DIR.exists():
-    DATA_DIR = Path('data/raw/')  # fallback to local
-
+    DATA_DIR = Path('data/raw/')
 OUTPUT_DIR = Path('/kaggle/working/')
 if not OUTPUT_DIR.exists():
     OUTPUT_DIR = Path('submissions/')
@@ -45,103 +32,62 @@ combined = pd.concat([train_df, val_df], ignore_index=True).dropna(subset=['inpu
 print(f"Train: {len(train_df)}, Val: {len(val_df)}, Test: {len(test_df)}, Combined: {len(combined)}")
 
 # ============================================================
-# STEP 2: Load BGE-M3 Model
+# STEP 2: Load BGE-M3
 # ============================================================
 print("\nLoading BGE-M3 model...")
 from FlagEmbedding import BGEM3FlagModel
-
 model = BGEM3FlagModel('BAAI/bge-m3', use_fp16=True)
 print("✅ BGE-M3 loaded!")
 
 # ============================================================
-# STEP 3: Encode All Questions (Corpus)
+# STEP 3: Encode Corpus
 # ============================================================
 print("\nEncoding corpus questions...")
 corpus_questions = combined['input'].fillna('').tolist()
-corpus_outputs = model.encode(
-    corpus_questions,
-    batch_size=32,
-    max_length=256,
-    return_dense=True,
-    return_sparse=True,
-    return_colbert_vecs=False,  # ColBERT is slow; use dense+sparse first
-)
-corpus_dense = corpus_outputs['dense_vecs']  # (N, 1024) numpy
-corpus_sparse = corpus_outputs['lexical_weights']  # list of dicts
-print(f"Corpus encoded: dense={corpus_dense.shape}")
+corpus_out = model.encode(corpus_questions, batch_size=32, max_length=256,
+                          return_dense=True, return_sparse=True, return_colbert_vecs=False)
+corpus_dense = corpus_out['dense_vecs'].astype(np.float32)  # FIX: force float32
+corpus_sparse = corpus_out['lexical_weights']
+print(f"Corpus: {corpus_dense.shape}, dtype={corpus_dense.dtype}")
 
 # ============================================================
-# STEP 4: Build FAISS Index for Dense Retrieval
+# STEP 4: Build FAISS Index
 # ============================================================
 print("\nBuilding FAISS index...")
-import faiss
-
-# Normalize for cosine similarity
 faiss.normalize_L2(corpus_dense)
-dim = corpus_dense.shape[1]
-index = faiss.IndexFlatIP(dim)
+index = faiss.IndexFlatIP(corpus_dense.shape[1])
 index.add(corpus_dense)
-print(f"FAISS index: {index.ntotal} vectors, dim={dim}")
-
+print(f"FAISS index: {index.ntotal} vectors")
 
 # ============================================================
-# STEP 5: Sparse Retrieval Function
+# STEP 5: Retrieval Functions
 # ============================================================
-def sparse_score(q_sparse, doc_sparse):
-    """Compute sparse similarity between query and document lexical weights."""
-    score = 0.0
-    for token, weight in q_sparse.items():
-        if token in doc_sparse:
-            score += weight * doc_sparse[token]
-    return score
+def sparse_score(q_sp, doc_sp):
+    return sum(w * doc_sp.get(t, 0.0) for t, w in q_sp.items())
 
-
-def hybrid_retrieve(query_dense, query_sparse, subset=None, top_k=10,
-                    dense_weight=0.6, sparse_weight=0.4):
-    """Hybrid retrieval combining dense and sparse scores."""
-    # Dense retrieval: get top-50 candidates
-    query_dense_norm = query_dense.copy()
-    faiss.normalize_L2(query_dense_norm)
-    D, I = index.search(query_dense_norm, 50)
-
+def hybrid_retrieve(q_dense, q_sparse, q_text, top_k=5, dense_w=0.6, sparse_w=0.4):
+    q = q_dense.astype(np.float32).copy()  # FIX: always float32
+    faiss.normalize_L2(q)
+    D, I = index.search(q, 50)
     candidates = []
     for j in range(50):
-        idx = I[0][j]
-        dense_score = float(D[0][j])
-
-        # Optional: filter by subset (language)
-        if subset and combined.iloc[idx]['subset'] != subset:
-            continue
-
-        # Sparse score
-        sp_score = sparse_score(query_sparse, corpus_sparse[idx])
-
-        # Hybrid score
-        hybrid = dense_weight * dense_score + sparse_weight * sp_score
-
+        idx = int(I[0][j])
+        cq = str(combined.iloc[idx]['input']).strip()
+        if cq == q_text:
+            continue  # skip self-match
+        ds = float(D[0][j])
+        ss = sparse_score(q_sparse, corpus_sparse[idx])
         candidates.append({
-            'index': idx,
             'answer': str(combined.iloc[idx]['output']),
-            'question': str(combined.iloc[idx]['input']),
-            'subset': combined.iloc[idx]['subset'],
-            'dense_score': dense_score,
-            'sparse_score': sp_score,
-            'hybrid_score': hybrid,
+            'score': dense_w * ds + sparse_w * ss,
         })
-
-    # If subset filtering gave too few results, retry without filter
-    if len(candidates) < top_k and subset:
-        return hybrid_retrieve(query_dense, query_sparse, subset=None,
-                               top_k=top_k, dense_weight=dense_weight,
-                               sparse_weight=sparse_weight)
-
-    # Sort by hybrid score
-    candidates.sort(key=lambda x: -x['hybrid_score'])
-    return candidates[:top_k]
-
+        if len(candidates) >= top_k:
+            break
+    candidates.sort(key=lambda x: -x['score'])
+    return candidates
 
 # ============================================================
-# STEP 6: Evaluate on Validation Set
+# STEP 6: Evaluate on Val (tune weights)
 # ============================================================
 print("\n" + "=" * 60)
 print("EVALUATING ON VALIDATION SET")
@@ -149,119 +95,70 @@ print("=" * 60)
 
 scorer = rouge_scorer.RougeScorer(['rouge1', 'rougeL'], use_stemmer=False)
 
-# Encode val questions
 print("Encoding val questions...")
 val_questions = val_df['input'].fillna('').tolist()
-val_outputs = model.encode(
-    val_questions,
-    batch_size=32,
-    max_length=256,
-    return_dense=True,
-    return_sparse=True,
-    return_colbert_vecs=False,
-)
-val_dense = val_outputs['dense_vecs']
-val_sparse = val_outputs['lexical_weights']
+val_out = model.encode(val_questions, batch_size=32, max_length=256,
+                       return_dense=True, return_sparse=True, return_colbert_vecs=False)
+val_dense = val_out['dense_vecs'].astype(np.float32)  # FIX
+val_sparse = val_out['lexical_weights']
 
-# Test different weight combinations
-best_weights = None
+best_weights = (0.6, 0.4)
 best_score = 0
 
-for dw in [0.4, 0.5, 0.6, 0.7, 0.8]:
+for dw in [0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]:
     sw = 1.0 - dw
     scores = []
-
-    for idx in range(min(500, len(val_df))):  # Quick eval on 500 samples
+    for idx in range(min(500, len(val_df))):
         q = val_questions[idx]
         ref = str(val_df.iloc[idx]['output']).strip()
-        subset = val_df.iloc[idx]['subset']
-
-        q_dense = val_dense[idx:idx + 1]
-        q_sparse = val_sparse[idx]
-
-        results = hybrid_retrieve(q_dense, q_sparse, subset=subset, top_k=5,
-                                  dense_weight=dw, sparse_weight=sw)
-
-        # Skip self-match
-        results = [r for r in results if r['question'] != q]
-        if results:
-            pred = results[0]['answer']
-        else:
-            pred = ''
-
+        results = hybrid_retrieve(val_dense[idx:idx+1], val_sparse[idx], q,
+                                  top_k=3, dense_w=dw, sparse_w=sw)
+        pred = results[0]['answer'] if results else ''
         r = scorer.score(ref, pred)
         scores.append(r['rouge1'].fmeasure)
-
     avg = np.mean(scores)
     print(f"  dense={dw:.1f} sparse={sw:.1f}: ROUGE-1={avg:.4f}")
-
     if avg > best_score:
         best_score = avg
         best_weights = (dw, sw)
 
-print(f"\n✅ Best weights: dense={best_weights[0]}, sparse={best_weights[1]}")
-print(f"✅ Best ROUGE-1: {best_score:.4f}")
+print(f"\n✅ Best: dense={best_weights[0]}, sparse={best_weights[1]}, ROUGE-1={best_score:.4f}")
 
-# Full val evaluation with best weights
+# Full val eval
 print("\nFull val evaluation...")
-all_scores = {'rouge1': [], 'rougeL': []}
+r1_all, rl_all = [], []
 for idx in tqdm(range(len(val_df)), desc="Val eval"):
     q = val_questions[idx]
     ref = str(val_df.iloc[idx]['output']).strip()
-    subset = val_df.iloc[idx]['subset']
-
-    q_dense = val_dense[idx:idx + 1]
-    q_sparse = val_sparse[idx]
-
-    results = hybrid_retrieve(q_dense, q_sparse, subset=subset, top_k=5,
-                              dense_weight=best_weights[0],
-                              sparse_weight=best_weights[1])
-    results = [r for r in results if r['question'] != q]
-
+    results = hybrid_retrieve(val_dense[idx:idx+1], val_sparse[idx], q,
+                              top_k=3, dense_w=best_weights[0], sparse_w=best_weights[1])
     pred = results[0]['answer'] if results else ''
-
     r = scorer.score(ref, pred)
-    all_scores['rouge1'].append(r['rouge1'].fmeasure)
-    all_scores['rougeL'].append(r['rougeL'].fmeasure)
+    r1_all.append(r['rouge1'].fmeasure)
+    rl_all.append(r['rougeL'].fmeasure)
 
-print(f"\nFull val ROUGE-1: {np.mean(all_scores['rouge1']):.4f}")
-print(f"Full val ROUGE-L: {np.mean(all_scores['rougeL']):.4f}")
-print(f"Compare to E5-base: 0.5219")
+print(f"\n{'='*60}")
+print(f"FULL VAL ROUGE-1: {np.mean(r1_all):.4f}")
+print(f"FULL VAL ROUGE-L: {np.mean(rl_all):.4f}")
+print(f"E5-base baseline: 0.5219")
+print(f"{'='*60}")
 
 # ============================================================
 # STEP 7: Generate Test Submission
 # ============================================================
-print("\n" + "=" * 60)
-print("GENERATING TEST SUBMISSION")
-print("=" * 60)
-
-print("Encoding test questions...")
+print("\nEncoding test questions...")
 test_questions = test_df['input'].fillna('').tolist()
-test_outputs_enc = model.encode(
-    test_questions,
-    batch_size=32,
-    max_length=256,
-    return_dense=True,
-    return_sparse=True,
-    return_colbert_vecs=False,
-)
-test_dense = test_outputs_enc['dense_vecs']
-test_sparse = test_outputs_enc['lexical_weights']
+test_out = model.encode(test_questions, batch_size=32, max_length=256,
+                        return_dense=True, return_sparse=True, return_colbert_vecs=False)
+test_dense = test_out['dense_vecs'].astype(np.float32)  # FIX
+test_sparse = test_out['lexical_weights']
 
 rows = []
 for idx in tqdm(range(len(test_df)), desc="Test submission"):
     q = test_questions[idx]
-    subset = test_df.iloc[idx]['subset']
-
-    q_dense = test_dense[idx:idx + 1]
-    q_sparse = test_sparse[idx]
-
-    results = hybrid_retrieve(q_dense, q_sparse, subset=subset, top_k=3,
-                              dense_weight=best_weights[0],
-                              sparse_weight=best_weights[1])
-
-    answer = results[0]['answer'] if results else "Health information not available."
-
+    results = hybrid_retrieve(test_dense[idx:idx+1], test_sparse[idx], q,
+                              top_k=3, dense_w=best_weights[0], sparse_w=best_weights[1])
+    answer = results[0]['answer'] if results else "No answer available."
     rows.append({
         'ID': test_df.iloc[idx]['ID'],
         'TargetRLF1': answer,
@@ -275,7 +172,7 @@ assert len(sub) == len(sample_sub)
 
 path = OUTPUT_DIR / 'exp12_bge_m3_hybrid.csv'
 sub.to_csv(path, index=False)
-print(f"\n✅ Saved: {path}")
+print(f"\n✅ DONE! Saved: {path}")
 print(f"Shape: {sub.shape}")
-print(f"\nDOWNLOAD THIS FILE AND SUBMIT TO ZINDI!")
-print(f"Comment: Experiment 12: BGE-M3 hybrid retrieval (dense={best_weights[0]:.1f} + sparse={best_weights[1]:.1f}). Auto-tuned weight ratio on val set.")
+print(f"\n📥 DOWNLOAD THIS FILE AND SUBMIT TO ZINDI!")
+print(f"Comment: Experiment 12: BGE-M3 hybrid retrieval (dense={best_weights[0]:.1f} + sparse={best_weights[1]:.1f}). SOTA multilingual retrieval model with auto-tuned dense/sparse weights on val.")
