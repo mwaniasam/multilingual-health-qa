@@ -15,6 +15,8 @@ The task is not free-form question answering. Given a test question, the system 
 
 My final system, V7, achieved a public leaderboard score of **0.6908**, climbing from a baseline of 0.4908 over the course of 44 documented experiments. The system was selected for the private leaderboard alongside a hedge submission (V4, score 0.6898). Both are fully open-source and use identical answer columns as required by the competition rules.
 
+![First submission on the Zindi leaderboard — Rank 392, score 0](screenshots/01_first_submission_rank392.png)
+
 ---
 
 ## 2. Dataset Understanding and Preprocessing
@@ -59,6 +61,8 @@ A pivotal discovery was that the `rouge_score` Python library tokenizes Amharic 
 **Experiment 3: AfriTeVa V2 Fine-tuning (0.2971).** I tried AfriTeVa V2 [2], an Africa-centric T5 model pre-trained on African language data. It scored +0.057 over mT5, suggesting the African language pre-training helped, but it was still far below the retrieval baseline. The conclusion was definitive: generation-based approaches cannot win a ROUGE-dominated competition.
 
 **Experiment 4: E5-base Semantic Retrieval (0.5742).** Switching to dense semantic retrieval using `intfloat/multilingual-e5-base` [3] with FAISS indexing produced a 16% improvement over TF-IDF. The E5 model captures semantic similarity that character n-grams miss, especially for morphologically rich languages where the same concept may have different surface forms.
+
+![Phase 1 submissions — TF-IDF (0.4908), mT5 (0.2396), AfriTeVa (0.2971), E5 (0.5742)](screenshots/02_early_submissions_tfidf_mt5.png)
 
 ### 3.2 Phase 2: The AfriE5 Backbone (Experiment 5)
 
@@ -108,6 +112,8 @@ The fine-tuning process used question-to-question (Q→Q) pairs: given a trainin
 | 8 | + Unicode fix + identical | 0.6843 | 0.675 | 0.609 | 0.805 | Correct scoring |
 | 9 | + Interp (V4) | **0.6898** | 0.679 | 0.608 | 0.822 | Selected final (hedge) |
 | 10 | + CE + QA-union (V7) | **0.6908** | 0.681 | 0.610 | 0.820 | Selected final (BEST) |
+
+![Final leaderboard position — Rank 15, score 0.6908 with metric breakdown](screenshots/06_final_leaderboard_rank15.png)
 
 ### 4.2 Per-Language Performance (Validation, Test-Mix Weighted)
 
