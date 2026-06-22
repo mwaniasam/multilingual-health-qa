@@ -138,9 +138,9 @@ The competition uses a weighted combination:
 
 ## AI Usage Disclosure
 
-- **Claude (Anthropic)** and **Antigravity (Google)** were used as coding assistants for experimentation, debugging, and code generation.
+- **Claude (Anthropic)** was  used as a coding assistant for experimentation, debugging, and code generation.
 - **Gemini API** was used in early experiments (Exp 6–11) but was **removed from the final solution** for open-source compliance.
-- All architectural decisions, experiment design, and analysis reflect the author's own understanding and judgment.
+- All architectural decisions, experiment design, and analysis reflect my own own understanding and judgment.
 
 ## Acknowledgments
 
