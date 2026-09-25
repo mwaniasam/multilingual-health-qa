@@ -6,7 +6,7 @@
 > **Course:** Machine Learning Techniques I — Final Course Project (40%)  
 > **Author:** Samuel Mwania  
 > **Zindi Username:** mwaniasam  
-> **Final Public Score:** 0.6908 (V7) · Rank ~13–15 / 200+  
+> **Final Public Score:** 0.6908 (V7) · **Final Rank:** 17th of 1,651 participants  
 > **Score Progression:** 0.4908 → 0.6908 (+41% relative improvement)
 
 ## Overview
